@@ -1,0 +1,548 @@
+---
+title: "An implementation of the STAMP protocol."
+author: "atb abelew@gmail.com"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_download: true
+    code_folding: show
+    fig_caption: true
+    fig_height: 7
+    fig_width: 7
+    highlight: tango
+    keep_md: false
+    mode: selfcontained
+    number_sections: true
+    self_contained: true
+    theme: readable
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+  rmdformats::readthedown:
+    code_download: true
+    code_folding: show
+    df_print: paged
+    fig_caption: true
+    fig_height: 7
+    fig_width: 7
+    highlight: tango
+    width: 300
+    keep_md: false
+    mode: selfcontained
+    toc_float: true
+  BiocStyle::html_document:
+    code_download: true
+    code_folding: show
+    fig_caption: true
+    fig_height: 7
+    fig_width: 7
+    highlight: tango
+    keep_md: false
+    mode: selfcontained
+    toc_float: true
+vignette: >
+  %\VignetteIndexEntry{error_quantification}
+  %\VignetteEngine{knitr::rmarkdown}
+  \usepackage[utf8]{inputenc}
+---
+
+<style type="text/css">
+body, td {
+  font-size: 16px;
+}
+code.r{
+  font-size: 16px;
+}
+pre {
+ font-size: 16px
+}
+</style>
+
+```{r options, include=FALSE}
+library("stampr")
+basedir <- system.file("extdata", package="stampr")
+knitr::opts_knit$set(width=120,
+                     root.dir=basedir,
+                     progress=TRUE,
+                     verbose=TRUE,
+                     echo=TRUE)
+knitr::opts_chunk$set(error=TRUE,
+                      dpi=96)
+old_options <- options(digits=4,
+                       stringsAsFactors=FALSE,
+                       knitr.duplicate.label="allow")
+ggplot2::theme_set(ggplot2::theme_bw(base_size=10))
+rundate <- format(Sys.Date(), format="%Y%m%d")
+##tmp <- sm(loadme(filename=paste0(gsub(pattern="\\.Rmd", replace="", x=previous_file), "-v", ver, ".rda.xz")))
+##rmd_file <- "03_expression_infection_20180822.Rmd"
+library(ggplot2)
+```
+
+# Fun with STAMP
+
+This document is intended to step through the STAMP protocol as described in:
+
+1.  "Sequence tag–based analysis of microbial population dynamics"
+2.  "Deciphering the landscape of host barriers to Listeria
+    monocytogenes infection"
+3.  "Systemic infection facilitates transmission
+    of Pseudomonas aeruginosa in mice"
+
+And a couple of other papers which I do not have open right now.  I am using a
+reference implementation kindly provided by Dr. Lee and Asan which came from one
+of the groups listed above, either they haven't told me who or I forgot.
+Assuming I receive permission, I will include that implementation here.
+
+# Introduction
+
+There are two broad strokes to the process:
+
+1.  Create a calibration curve showing the relationship between observed CFU and
+    tags observed in calibration samples.
+2.  Introduce a known set of tags to experimental samples, allow them to
+    propagate through the experimental organism, collect DNA samples, quantify
+    tags observed at different times/locations, cross reference them against
+    the calibration curve, and use that to estimate population bottlenecks
+    during the infection process.
+
+From the perspective of the experimental scientist (Dr. Lee and Asan), step 1 is
+relatively simple and step 2 is quite onerous.  From the perspective of a computer
+nerd, these two vastly different steps are similar and most of the work occurs
+in step 1.  This is nice because I have not yet received experimental results.
+This document will therefore describe the processing required to go from
+sequencer data to a functional calibration curve.  Along the way, I will
+introduce some alternatives to the original protocol and provide some example
+ways to estimate bottlenecks given artificial experimental input.
+
+With the above in mind, the tasks to process new samples are:
+
+1.  Create a sample sheet, defining the reference, calibration, and experimental
+    samples.  I included my copy with this package.
+2.  Trim the raw reads.  I used cutadapt through my cyoa preprocessing tool and
+    included one output script with this package.  I will leave trimming
+    multiple samples as an exercise to the reader.
+3.  Count the observed tags.  The authors performed this with qiime.  I will
+    show how to do that along with a somewhat more parsimonious method.
+4.  Filter the tags and quantify the Nb values.
+5.  Create a calibration curve using the quantified tags.
+6.  Estimate experimental Nb/CFU using the calibration curve.
+7.  Make pretty pictures along the way.
+
+# Installation
+
+The R package may be installed via:
+
+```{r installation, eval=FALSE}
+devtools::install_github("abelew/stampr")
+```
+
+# Sample metadata
+
+The sample sheet I created is an excel worksheet with one row for each sample.
+The most important columns are: "sampleid", "replicate", "type", "CFU",
+"index_table", and "qiime_otus".  I think they are mostly self-explanatory, here
+are the relevant details:
+
+1.  'type' should be either 'calibration', 'reference', or 'experimental'.
+2.  'CFU' should be filled in for the calibration and reference samples.  It will
+    be ignored and potentially overwritten for anything labeled 'experimental'.
+3.  'index_table' should include filenames for the outputs of my index counter
+    script (included in this package) 'count_idx.pl'.
+4.  'qiime_otus' should include the filenames produced by qiime's pick_otus.py
+    script.
+
+The following block shows the sample sheet from our data.  It is worth noting
+that I cheated and used my hpgltools' extract_metadata() function to read it, it
+removes any punctuation or shenanigans from the metadata sheet (in case someone
+with twitchy fingers added an extraneous space in a filename or something weird).
+
+```{r sample_sheet, results='asis'}
+basedir <- system.file("extdata", package="stampr")
+metadata_file <- file.path(basedir, "all_samples.xlsx")
+meta <- hpgltools::extract_metadata(metadata_file)
+knitr::kable(meta)
+```
+
+Note that I put all the raw reads in a series of directories in
+'preprocessing'.  I also recompressed every sample and symbolicly linked them to
+'r1.fastq.xz'.
+
+# Trim the raw reads
+
+I am not going to include the raw reads in this, but here is the relevant
+portion of the script produced by cyoa which performed the trimming for one
+sample.  This was one invocation performed on our computing cluster, so I will
+remove all the cluster-specific stuff and focus on the important pieces.  Also,
+if you look at the version of the script I included there are a few
+differences:
+
+1.  I shortened all these paths to relative.
+2.  My processor on the cluster by default trims some other adapters which I
+    removed for clarity from this.
+3.  I added explicit xz invocations to this.  On the cluster I have a series of
+    cleanup jobs which do this on multiple nodes.
+4.  By default, the less(1) command will not work to read xz/gz/bz2 compressed
+    files, and requires the user to first set the LESSOPEN variable, which I
+    included at the top.
+
+```{bash trimming, eval=FALSE}
+## This was taken from '07ca_r1.sh'
+LESSOPEN=| /usr/bin/lesspipe %s
+mkdir -p preprocessing/a1/outputs/cutadapt && \
+ less r1.fastq.xz | cutadapt -  \
+  -a GTCATAGCTGTTT \
+  -e 0.1 -n 3 \
+  -m 8 -M 42 \
+  --too-short-output=preprocessing/a1/outputs/cutadapt/r1_tooshort.fastq \
+  --too-long-output=preprocessing/a1/outputs/cutadapt/r1_toolong.fastq \
+  --untrimmed-output=preprocessing/a1/outputs/cutadapt/r1_untrimmed.fastq \
+  2>outputs/cutadapt.err 1>r1-trimmed_ca.fastq
+xz -9e r1-trimmed_ca.fastq preprocessing/a1/outputs/cutadapt/r1_tooshort.fastq \
+   preprocessing/a1/outputs/cutadapt/r1_toolong.fastq \
+   preprocessing/a1/outputs/cutadapt/r1_untrimmed.fastq
+```
+
+# Count observed tags
+
+The original authors used qiime to do this.  I wrote a simple perl script for
+it and included it in this package.  The perl script has the small advantage of
+being documented and rather fast.
+
+## Qiime OTU quantification
+
+This invocation is from my session on the computing cluster.  Again, this is
+just one example.  Also, I did not feel like using the qiime fastq to fasta
+converter, I am including it below.  In addition, I found notes in the various
+supplemental materials for the previous papers which said that the authors used
+99% and 90% identity for pick_otus.  The invocation below uses 90%.
+
+```{bash qiime, eval=FALSE}
+module add qiime
+fq2fa () {
+    paste - - - - < ${1} | cut -f 1,2 | sed 's/^@/>/' | tr "\t" "\n" > ${2}
+}
+
+cd preprocessing
+start=$(pwd)
+for sample in *; do
+    cd ${sample}
+    fq2fa $(less r1-trimmed_ca.fastq.xz) ${sample}.fasta
+    pick_otus.py -i ${sample}.fasta -o $(pwd) -s 0.9
+    rm ${sample}.fasta
+    xz -9e ${sample}_otus.txt
+    cd ${start}
+done
+```
+
+## Perl tag counting
+
+In contrast, I wrote a short perl script which counts tags without using
+ucsearch/blast/etc from qiime.  This has advantages of speed, simplicity, and
+it only counts identical tags as opposed to the potential mismatches allowed by
+the alignment tools.  The output files are also much simpler 2 column tsv files
+with a tag and number on each row.
+
+```{bash perl, eval=FALSE}
+cd preprocessing
+start=$(pwd)
+for sample in *; do
+    cd ${sample}
+    ../count_idx.pl r1-trimmed_ca.fastq.xz
+    xz -9e idx_count.txt
+    cd ${start}
+done
+```
+
+## Look for yourself
+
+If you wish to try it for yourself, I included archives of the trimmed reads,
+the outputs from pick_otus.py and the outputs from count_idx.pl.
+
+### Extract the trimmed reads
+
+```{r extract_reads}
+untarred <- utils::untar(tarfile=system.file("extdata/trimmed_reads.tar", package="stampr"))
+```
+
+### Extract the otus
+
+```{r extract_otus}
+untarred <- utils::untar(tarfile=system.file("extdata/otus.tar", package="stampr"))
+```
+
+### Extract the tag counts
+
+```{r extract_counts}
+untarred <- utils::untar(tarfile=system.file("extdata/tag_counts.tar", package="stampr"))
+```
+
+At this point, the current working directory should have files in it for the
+trimmed reads, the qiime otus, and the counts from my perl script.  For the
+following steps, I will begin by performing each task as the original authors
+did them.  I will then show how to perform them using this package.
+
+# Tag quantification
+
+## Original with slight changes
+
+This does not work without the qiime output files from the authors, which I
+don't have.  I hypothesize that they changed the format of the output files, but
+I am not completely certain about how they were changed, so I am just going to
+leave it here.
+
+```{r tally, eval=FALSE}
+## This R script will take the output files containing representative STAMP barcode sequences and
+## their individual abundance in the sequencer output from all samples  that
+## you sequenced and copies them in a single .csv file in the format that is
+## expected from the Nb estimation script
+
+output_file <- "qiime_tally.csv"
+## files <- list.files(txt_dir)
+files <- meta[["qiimeotus"]]
+names <- files
+v.length <- rep(NA, length(names))
+for (f in 1:length(files)) {
+  file <- files[f]
+  ##mtrx <- read.table(file, sep="\t", header=FALSE, fill=TRUE)
+  ##colnames(mtrx) <- c(paste0(files[f], "_seq"), files[f])
+  eval(parse(text=paste("Data=as.matrix(read.table('",file,"', fill=TRUE, sep='\t'))",sep="")))
+  colnames(Data) <- c(paste(names[f],"_seq", sep=""), names[f])
+  name <- paste("Matrix", names[f], sep="")
+  assign(name, Data)
+  name <- paste("Matrix", names[f], sep="")
+  assign(name, Data)
+  v.length[f] <- nrow(Data)
+}
+max <- max(v.length) + 1
+fill.up <- max - v.length
+
+FillUpMatrix <- matrix(data=NA, nrow=fill.up[1], ncol=2)
+eval(parse(text=paste("OutputMatrix=rbind(Matrix", names[1],", FillUpMatrix)", sep="")))
+for(ff in 2:length(files)) {
+  eval(parse(text=paste("MatrixX=Matrix", names[ff], sep="")))
+  FillUpMatrix <- matrix(data=NA, nrow=fill.up[ff], ncol=2)
+  Matrix <- rbind(MatrixX, FillUpMatrix)
+  OutputMarix <- cbind(OutputMatrix, Matrix)
+}
+write.csv(OutputMatrix, file=outputfilename)
+```
+
+All of the functions in this package require a metadata dataframe as input.
+Thus, meta will be the first parameter for pretty much every function.
+
+## My method using actual qiime output files
+
+In my current invocation qiime does not return the tag sequences but instead
+calls them denovoXXX because it was run in its denovo mode.  In terms of result,
+this is a little weird but not relevant.
+
+```{r read_qiime_otus}
+qiime_tags <- read_qiime_otus(meta, otu_column="qiimeotus", trimmed_column="trimmedfastq")
+head(qiime_tags[["modified_metadata"]])
+meta <- qiime_tags[["modified_metadata"]]
+
+## Number of reads / tag
+plot_read_density(qiime_tags)
+```
+
+## My method using the perl tag counts
+
+```{r read_perl_tags}
+perl_tags <- read_tags(meta, index_column="indextable")
+summary(perl_tags)
+## read_idx returns a list with 3 elements:
+##  the input metadata with some new columns.
+##  the counts in a long format for easier plotting.
+##  the counts in a wide format, which is easier to work with.
+head(perl_tags[["modified_metadata"]])
+## The new elements in the metadata include:
+##  reads:  how many reads were used in this counting.
+##  observed: how many tags were observed.
+##  passed_cutoff: how many tags passed our simple cutoff for 'real'.
+##  rejected_cutoff: passed + rejected = observed
+##  max: What is the maximum number of reads for 1 tag.  Thus for a1, we see that one tag sucked up
+##       almost half of all the reads.
+
+## Given the above, we can trivially plot how many reads/tag there are for each sample:
+plot_read_density(perl_tags)
+```
+
+## The original qiime tally file
+
+Note that the original method has a slightly different format.
+
+```{r original_qiime_tally}
+original_tag_file <- system.file("extdata/original_qiime_tally.csv", package="stampr")
+original_tags <- read.csv(original_tag_file)
+head(original_tags)
+```
+
+# Filter the tags
+
+There are lots of ways one may choose to filter the tags to get the set of
+'real' tags.  Ideally, one would take the tags observed in the reference samples
+and remove anything not in it.  Sadly, in our current data, there are far far
+fewer tags in the references than the calibration samples, so I have not
+implemented that.  Conversely, one might choose to remove tags observed in < x
+samples.  I haven't implemented that yet either.  I did, however, cpm() the
+matrix and remove anything less than 1x the number of samples (which is configurable).
+
+```{r filter_tags}
+new_meta <- perl_tags[["modified_metadata"]]
+current_tags <- perl_tags[["sample_counts"]]
+filtered_tags <- filter_tags(perl_tags)
+summary(filtered_tags)
+head(filtered_tags[["modified_metadata"]])
+## Thus the new column 'passed_aggressive_cpm'
+```
+
+# Quantify the Nb values.
+
+## The original with slight changes
+
+The following block contains the original code with slight modifications and
+produces the same Nb values as provided.
+
+```{r quantify_nb_original, eval=FALSE}
+inputdata <- "../../original/BigMatAll_STAMP_CAUTI_calcurve1_working.csv"
+### read input sequence data file
+## Data=as.matrix(read.csv(inputdata,row.names=1))
+Data <- read.csv(inputdata)
+rownames(Data) <- make.names(Data[["X"]], unique=TRUE)
+Data[["X"]] <- NULL
+
+#BigMatAll=DataII[,2:ncol(DataII)]
+BigMatAll <- Data
+
+### USER ### define output filename
+name <- "New_EstimateMatrix_CAUTI_Calcurve1"
+
+### shows colnames and col # to make it easier to identify the reference samples
+### and the data samples
+cbind(1:ncol(BigMatAll), colnames(BigMatAll))
+
+### should a calibration curve be used to normalize the data? TRUE/FALSE
+usecalibrationcurve <- FALSE
+
+### USER ### If calibration curve is used, give path to calibration data
+### ("CalibrationLookup")
+if (usecalibrationcurve) {
+  load("/Users/kerbachta/Desktop/STAMP/calcurve3/CalibrationLookup.Rdata")
+}
+
+### USER ### define which columns of BigMatAll contain real read numbers and not
+### meta-data like binaries, average count number or absolute presence in
+### samples. Usually column 1 to 24 (1:24) contain real read numbers.
+v.reads <- 1:23
+
+### USER ### define which columns of BigMatAll contain reference samples
+### (usually the inoculum)? Define at least two columns e.g. 1:2 or c(1,2) would
+### mean column 1 and column 2 of BigMatAll contain reference samples.
+## v.reference <- 21:23
+v.reference <- c(8, 15, 23)
+
+### USER ### define which columns of BigMatAll contain data samples (that should
+### be the columns of BigMatAll that contain real read numbers minus the
+### reference columns)
+## v.bottlenecksamples <- 1:20
+v.bottlenecksamples <- c(1:7, 9:14, 16:22)
+
+### define threshold for inocula (e.g. sequence must be present at least once)
+v.threshold <- which(rowSums(BigMatAll[, v.reference], na.rm=TRUE) > 0)
+
+### choose real reads
+ThresholdMatrix <- BigMatAll[v.threshold, v.reads]
+
+## Why was this not done first?
+### NA= 0 (not present)
+ThresholdMatrix[is.na(ThresholdMatrix) == TRUE] <- 0
+
+### Create matrix with references only
+ReferenceMatrix <- ThresholdMatrix[, v.reference]
+head(ReferenceMatrix)
+
+### Define FrequenzMatrix
+fReferenceMatrix <- matrix(nrow=nrow(ReferenceMatrix),
+                           ncol=ncol(ReferenceMatrix),
+                           dimnames=list(rownames(ReferenceMatrix),
+                                         colnames(ReferenceMatrix)))
+
+### Fill FrequenzMatrix with frequencies
+for(x in 1:ncol(fReferenceMatrix)) {
+	fReferenceMatrix[, x] <- ReferenceMatrix[, x] / sum(ReferenceMatrix[, x])
+}
+
+### Average frequencies
+fTotalInoculum <- rowMeans(fReferenceMatrix, na.rm=TRUE)
+
+### make matrix that connects bottleneckestimate to columnname
+EstimateMatrix <- matrix(nrow=5, ncol=length(v.bottlenecksamples))
+colnames(EstimateMatrix) <- colnames(BigMatAll[, v.bottlenecksamples])
+rownames(EstimateMatrix) <- c("Nb","lower CI","Nb'_median","upper CI","# sequences")
+
+### define expected counts and frequencies
+expectedCounts <- rowMeans(ReferenceMatrix, na.rm=TRUE)
+expvec <- fTotalInoculum[expectedCounts > 0]
+inoculumSize <- sum(ReferenceMatrix, na.rm=TRUE)
+
+### loop for estimating Ne for each sample
+for (i in 1:length(v.bottlenecksamples)) {
+  bnvec <- ThresholdMatrix[, v.bottlenecksamples[i]]
+  bnvec <- bnvec[expectedCounts > 0]
+  sampleSize <- sum(bnvec)
+  binomialNenner <- expvec * (1 - expvec)
+  measured <- bnvec / sum(bnvec)
+  var <- (measured - expvec) ^ 2
+  binomial <- as.numeric(var) / as.numeric(binomialNenner)
+  BSize <- 1 / (mean(binomial) - 1 / sampleSize - 1 / inoculumSize)
+  EstimateMatrix[1, i] <- BSize
+  Log10BSize <- round(log10(BSize), 2)
+  EstimateMatrix[5, i] <- sampleSize
+### this part of the code compares to the lookupmatrix
+  if (usecalibrationcurve) {
+    if (Log10BSize < max(as.numeric(rownames(LookUpMatrix)))) {
+      if (usecalibrationcurve) {
+        EstimateMatrix[2:4, i] <- 10 ^ LookUpMatrix[as.character(Log10BSize), ]
+      }
+    }
+  }
+}
+
+head(EstimateMatrix)
+tmp <- t(EstimateMatrix)
+meta[["Nb_original"]] <- 0
+for (l in 1:nrow(tmp)) {
+  row <- tmp[l, ]
+  name <- rownames(tmp)[l]
+  name <- tolower(gsub(x=name, pattern="\\.txt", replacement=""))
+  meta[name, "Nb_original"] <- row[["Nb"]]
+}
+```
+
+## My version from the index counts
+
+```{r my_nb_idx}
+my_nb <- calculate_nb(perl_tags, metadata_column="MyNb")
+```
+
+## Calculate Nb after top-n tag filtering.
+
+```{r nb_filtered}
+topn_filtered <- filter_topn_tags(my_nb, topn=600)
+topn600_nb <- calculate_nb(topn_filtered, metadata_column="Nb600")
+top500_filtered <- filter_topn_tags(topn600_nb, topn=500)
+topn500_nb <- calculate_nb(top500_filtered, metadata_column="Nb500", write="modified_metadata-20210105.xlsx")
+```
+
+# Create Calibration curve
+
+```{r plot_calibration}
+cali_curve <- plot_calibration(topn500_nb)
+cali_curve$lm
+hpgltools::pp(file="conservative_calibration_curve.png", image=cali_curve$plot)
+```
+
+5.  Create a calibration curve using the quantified tags.
+6.  Estimate experimental Nb/CFU using the calibration curve.
+7.  Make pretty pictures along the way.
