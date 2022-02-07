@@ -470,7 +470,7 @@ fReferenceMatrix <- matrix(nrow = nrow(ReferenceMatrix),
 
 ### Fill FrequenzMatrix with frequencies
 for(x in 1:ncol(fReferenceMatrix)) {
-	fReferenceMatrix[, x] <- ReferenceMatrix[, x] / sum(ReferenceMatrix[, x])
+    fReferenceMatrix[, x] <- ReferenceMatrix[, x] / sum(ReferenceMatrix[, x])
 }
 
 ### Average frequencies
