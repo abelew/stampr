@@ -12,7 +12,7 @@
 #' @param cutoff Initial reads/tag filter.
 #' @export
 read_tags <- function(metadata, id_column = "sampleid", index_column = "index_table",
-                     output = NULL, cutoff = 3) {
+                      sample_column = "replicate", output = NULL, cutoff = 3) {
   long_samples <- data.frame()
   all_counts <- data.table::data.table()
   modified <- metadata
@@ -45,7 +45,7 @@ read_tags <- function(metadata, id_column = "sampleid", index_column = "index_ta
       all_counts <- merge(all_counts, tmp, by = "idx", all = TRUE)
     }
     element[["cfu"]] <- metadata[s, "cfu"]
-    element[["sample"]] <- metadata[s, "condition"]
+    element[["sample"]] <- metadata[s, sample_column]
     element[["sampleid"]] <- sampleid
     modified[s, "post_reads"] <- sum(element[["number"]])
     modified[s, "max_reads_per_tag"] <- max(element[["number"]])

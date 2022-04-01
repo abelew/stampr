@@ -11,8 +11,8 @@
 #' @param transform_y Perform a transformation on the y axis?
 #' @export
 plot_calibration <- function(tags, x_column = "cfu", y_column = NULL,
-                             color_column = "replicate", transform_x = "log2",
-                             transform_y = "log2") {
+                             color_column = "replicate", transform_x = "log10",
+                             transform_y = "log10") {
   meta <- tags[["modified_metadata"]]
   calibration_idx <- meta[["type"]] == "calibration"
   cali <- meta[calibration_idx, ]

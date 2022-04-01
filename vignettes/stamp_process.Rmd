@@ -348,6 +348,9 @@ plot_read_density(qiime_tags)
 
 ## My method using the perl tag counts
 
+In the following block, I essentially repeat the above using tags as
+defined by my simplified perl script.
+
 ```{r read_perl_tags}
 perl_tags <- read_tags(meta, index_column = "indextable")
 summary(perl_tags)
@@ -524,6 +527,8 @@ for (l in 1:nrow(tmp)) {
 
 ```{r my_nb_idx}
 my_nb <- calculate_nb(perl_tags, metadata_column = "MyNb")
+
+qiime_nb <- calculate_nb(qiime_tags, metadata_column="qiimenb")
 ```
 
 ## Calculate Nb after top-n tag filtering.
@@ -539,9 +544,24 @@ topn500_nb <- calculate_nb(top500_filtered, metadata_column = "Nb500",
 # Create Calibration curve
 
 ```{r plot_calibration}
-cali_curve <- plot_calibration(topn500_nb)
+cali_curve <- plot_calibration(qiime_nb)
+cali_curve$plot
+cali_curve$lm
+
+cali_curve_top500 <- plot_calibration(topn500_nb, transform_x = "log10", transform_y="log10")
+cali_curve_top500$plot
+cali_curve$lm
+
+cali_curve <- plot_calibration(my_nb, transform_x = "log10", transform_y = "log10")
+cali_curve$plot
 cali_curve$lm
 hpgltools::pp(file = "conservative_calibration_curve.png", image = cali_curve$plot)
+
+topn500_nb_nolast <- exclude_samples(topn500_nb, max_dilution=1e-02)
+cali_curve_log10 <- plot_calibration(topn500_nb_nolast, transform_x = "log10", transform_y = "log10")
+cali_curve_log10$lm
+cali_curve_log10$plot
+hpgltools::pp(file = "conservative_calibration_curve_log10_nolastdilution.pdf", image = cali_curve_log10$plot)
 ```
 
 5.  Create a calibration curve using the quantified tags.

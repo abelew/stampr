@@ -30,6 +30,12 @@ calculate_nb <- function(tags, generations = 1, metadata_column = "Nb", write = 
   ref_mtrx[na_idx] <- 0
   ref_mtrx <- as.matrix(ref_mtrx)
 
+  ## Perform a filter for tags not observed in the reference samples
+  observed_reference_tags <- rowSums(ref_mtrx, na.rm = TRUE) > 0
+  removed_tags <- sum(!observed_reference_tags)
+  message("Removed: ", removed_tags, " not observed in the reference samples.")
+  nb_mtrx <- nb_mtrx[observed_reference_tags, ]
+
   ## The equation for estimating the bottleneck size is available at:
   ## https://www.nature.com/articles/nmeth.3253 in section 'Bottleneck population size estimate'.
   ## Written out it is:
@@ -46,15 +52,15 @@ calculate_nb <- function(tags, generations = 1, metadata_column = "Nb", write = 
 
   ## So, in the equations, fi,0 is the set of mean frequencies which are > 0
   ## from the reference samples.  I will call that term mean_ref_frequencies:
-  ## I don't think this one is used.
-  ## nb_frequencies <- make_frequency_df(nb_mtrx)
   ref_frequencies <- make_frequency_df(ref_mtrx)
   mean_frequencies <- rowMeans(ref_frequencies, na.rm = TRUE)
   mean_counts <- rowMeans(ref_mtrx, na.rm = TRUE)
   mean_gt_zero_idx <- mean_counts > 0
   mean_frequencies_gt_zero <- mean_frequencies[mean_gt_zero_idx]
-  initial_frequencies <- mean_frequencies_gt_zero * (1 - mean_frequencies_gt_zero)
-  total_reads <- sum(ref_mtrx)
+  innoculum_frequencies <- rowMeans(ref_frequencies, na.rm = TRUE)
+  mean_gt_zero <- mean_counts > 0
+  initial_frequencies <- innoculum_frequencies[mean_gt_zero]
+  total_reads <- sum(ref_mtrx, na.rm = TRUE)
 
   ## Set aside a column in the metadata into which to put the Nb estimate
   meta[["Nb"]] <- NA
@@ -63,9 +69,12 @@ calculate_nb <- function(tags, generations = 1, metadata_column = "Nb", write = 
     column_subset <- column_vector[mean_gt_zero_idx]
     reads_in_sample <- sum(column_subset)
     sample_frequencies <- column_subset / sum(column_subset)
+    subtracted_frequencies <- initial_frequencies * (1 - initial_frequencies)
     sample_variance <- (sample_frequencies - initial_frequencies) ^ 2
-    sample_vs_threshold <- sample_variance / initial_frequencies
-    Nb_estimate <- generations / (mean(sample_vs_threshold) - 1 / reads_in_sample - 1 / total_reads)
+    sample_vs_threshold <- sample_variance / subtracted_frequencies
+
+    Nb_estimate <- generations /
+      (mean(sample_vs_threshold) - 1 / reads_in_sample - 1 / total_reads)
     meta[nb_sample, metadata_column] <- Nb_estimate
   }
   if (!is.null(write)) {

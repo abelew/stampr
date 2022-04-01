@@ -1,0 +1,255 @@
+---
+title: "Incorporating the original data into my implementation."
+author: "atb abelew@gmail.com"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_download: true
+    code_folding: show
+    fig_caption: true
+    fig_height: 7
+    fig_width: 7
+    highlight: tango
+    keep_md: false
+    mode: selfcontained
+    number_sections: true
+    self_contained: true
+    theme: readable
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+  rmdformats::readthedown:
+    code_download: true
+    code_folding: show
+    df_print: paged
+    fig_caption: true
+    fig_height: 7
+    fig_width: 7
+    highlight: tango
+    width: 300
+    keep_md: false
+    mode: selfcontained
+    toc_float: true
+  BiocStyle::html_document:
+    code_download: true
+    code_folding: show
+    fig_caption: true
+    fig_height: 7
+    fig_width: 7
+    highlight: tango
+    keep_md: false
+    mode: selfcontained
+    toc_float: true
+vignette: >
+  %\VignetteIndexEntry{error_quantification}
+  %\VignetteEngine{knitr::rmarkdown}
+  \usepackage[utf8]{inputenc}
+---
+
+<style type = "text/css">
+body, td {
+  font-size: 16px;
+}
+code.r{
+  font-size: 16px;
+}
+pre {
+ font-size: 16px
+}
+</style>
+
+```{r options, include = FALSE}
+library("stampr")
+basedir <- system.file("extdata", package = "stampr")
+knitr::opts_knit$set(width = 120,
+                     root.dir = basedir,
+                     progress = TRUE,
+                     verbose = TRUE,
+                     echo = TRUE)
+knitr::opts_chunk$set(error = TRUE,
+                      dpi = 96)
+old_options <- options(digits = 4,
+                       stringsAsFactors = FALSE,
+                       knitr.duplicate.label = "allow")
+ggplot2::theme_set(ggplot2::theme_bw(base_size = 10))
+rundate <- format(Sys.Date(), format = "%Y%m%d")
+##tmp <- sm(loadme(filename = paste0(gsub(pattern = "\\.Rmd", replace = "", x = previous_file), "-v", ver, ".rda.xz")))
+##rmd_file <- "03_expression_infection_20180822.Rmd"
+library(ggplot2)
+```
+
+# Let us prove that my implementation is(not) identical to the original
+
+This document hopes to demonstrate how one may incorporate the
+original csv from the STAMP authors as input to my implementation and
+(hopefully) get the same result.  Thus I will make a hopefully small
+change to my implementation to support the format of the original csv
+data.
+
+This path of the data will therefore skip the various preprocessing
+tasks I performed.  Assuming it works, I should then be able to
+incorporate the filter from the stampr_rtisan in a modified form.
+
+https://github.com/hullahalli/stampr_rtisan
+
+# First step
+
+I think the first step in this process will be to incorporate the
+exact csv input used by the original authors rather than introduce the
+differences (which are very small) when accrue when I do my own
+preprocessing.
+
+Therefore, I will read in the metadata in the same fashion as
+performed in my previous implementation, but follow that up by just
+reading in the csv input.
+
+```{r sample_sheet, results='asis'}
+basedir <- system.file("extdata", package = "stampr")
+metadata_file <- file.path(basedir, "all_samples.xlsx")
+meta <- hpgltools::extract_metadata(metadata_file)
+knitr::kable(meta)
+```
+
+# Tag quantification from authors' csv
+
+My calculate_nb() assumes input containing:
+
+1. the metadata: Used to extract the reference/calibration/experimental samples.
+2. long_samples: A melted version of the reads/tag data.
+3. sample_counts: #2, but not melted (which is pretty much exactly
+   what I get from the input csv.
+
+## Original values
+
+               Nb
+A8.txt  1.113e+07
+B8.txt -3.267e+05
+C8.txt -3.726e+07
+A1.txt  1.262e+02
+A2.txt  4.854e+02
+A3.txt  5.525e+03
+A4.txt  3.872e+04
+A6.txt  2.652e+05
+A7.txt  6.271e+05
+B2.txt  6.324e+02
+B3.txt  4.191e+03
+B4.txt  3.431e+04
+B5.txt  1.491e+05
+B7.txt  7.780e+05
+C1.txt  8.649e+01
+C2.txt  1.136e+03
+C3.txt  1.135e+04
+C4.txt  1.021e+05
+C5.txt  4.064e+05
+C6.txt  1.138e+06
+
+```{r calculate_from_csv}
+## csv_input <- metadata_file <- file.path(basedir, "rtisan_calibration_curve_ordered_frequencies.csv")
+csv_input <- "inst/extdata/rtisan_calibration_curve_ordered_frequencies.csv"
+
+csv_tags <- read_csv_tags(csv_input, meta)
+plot_read_density(csv_tags)
+raw_csv_nb <- calculate_nb(csv_tags, metadata_column = "nb_raw_csv")
+
+
+csv_filtered <- filter_topn_tags(raw_csv_nb, topn = 600)
+filtered_csv_nb <- calculate_nb(csv_filtered, metadata_column = "nb_filtered_csv",
+                                write = "csv_modified_metadata.xlsx")
+
+cali_curve_csv <- plot_calibration(raw_csv_nb)
+cali_curve_csv$plot
+cali_curve_csv$lm
+
+cali_curve_filt_csv <- plot_calibration(filtered_csv_nb)
+cali_curve_filt_csv$plot
+cali_curve_filt_csv$lm
+```
+
+# Compare to my tags
+
+```{r compare_perl_tags}
+perl_tags <- read_tags(meta, index_column = "indextable")
+
+plot_read_density(perl_tags)
+my_nb <- calculate_nb(perl_tags, metadata_column = "MyNb")
+my_filtered_nb <- filter_topn_tags(my_nb, topn = 600)
+my_calibration <- plot_calibration(my_nb)
+my_calibration$plot
+```
+
+# Perform original calculation with this csv df
+
+```{r original_this_csv}
+Data <- read.csv(csv_input)
+rownames(Data) <- make.names(Data[["X"]], unique = TRUE)
+Data[["X"]] <- NULL
+#BigMatAll = DataII[,2:ncol(DataII)]
+BigMatAll <- Data
+usecalibrationcurve <- FALSE
+
+cbind(1:ncol(BigMatAll), colnames(BigMatAll))
+v.reads <- 1:23
+v.reference <- c(1, 2, 3)
+v.bottlenecksamples <- c(1:7, 9:14, 16:22)
+v.threshold <- which(rowSums(BigMatAll[, v.reference], na.rm = TRUE) > 0)
+ThresholdMatrix <- BigMatAll[v.threshold, v.reads]
+ThresholdMatrix[is.na(ThresholdMatrix) == TRUE] <- 0
+ReferenceMatrix <- ThresholdMatrix[, v.reference]
+head(ReferenceMatrix)
+fReferenceMatrix <- matrix(nrow = nrow(ReferenceMatrix),
+                           ncol = ncol(ReferenceMatrix),
+                           dimnames = list(rownames(ReferenceMatrix),
+                                           colnames(ReferenceMatrix)))
+for (x in 1:ncol(fReferenceMatrix)) {
+    fReferenceMatrix[, x] <- ReferenceMatrix[, x] / sum(ReferenceMatrix[, x])
+}
+
+fTotalInoculum <- rowMeans(fReferenceMatrix, na.rm = TRUE)
+
+### make matrix that connects bottleneckestimate to columnname
+EstimateMatrix <- matrix(nrow = 5, ncol = length(v.bottlenecksamples))
+colnames(EstimateMatrix) <- colnames(BigMatAll[, v.bottlenecksamples])
+rownames(EstimateMatrix) <- c("Nb","lower CI","Nb'_median","upper CI","# sequences")
+
+### define expected counts and frequencies
+expectedCounts <- rowMeans(ReferenceMatrix, na.rm = TRUE)
+expvec <- fTotalInoculum[expectedCounts > 0]
+inoculumSize <- sum(ReferenceMatrix, na.rm = TRUE)
+
+### loop for estimating Ne for each sample
+for (i in 1:length(v.bottlenecksamples)) {
+  this_bottleneck_sample <- v.bottlenecksamples[i]
+  this_sample <- colnames(ThresholdMatrix)[this_bottleneck_sample]
+  print(this_sample)
+  bnvec <- ThresholdMatrix[, v.bottlenecksamples[i]]
+  bnvec <- bnvec[expectedCounts > 0]
+  sampleSize <- sum(bnvec)
+  binomialNenner <- expvec * (1 - expvec)
+  measured <- bnvec / sum(bnvec)
+  var <- (measured - expvec) ^ 2
+  binomial <- as.numeric(var) / as.numeric(binomialNenner)
+  BSize <- 1 / (mean(binomial) - 1 / sampleSize - 1 / inoculumSize)
+  EstimateMatrix[1, i] <- BSize
+  Log10BSize <- round(log10(BSize), 2)
+  EstimateMatrix[5, i] <- sampleSize
+### this part of the code compares to the lookupmatrix
+  if (usecalibrationcurve) {
+    if (Log10BSize < max(as.numeric(rownames(LookUpMatrix)))) {
+      if (usecalibrationcurve) {
+        EstimateMatrix[2:4, i] <- 10 ^ LookUpMatrix[as.character(Log10BSize), ]
+      }
+    }
+  }
+}
+
+head(EstimateMatrix)
+tmp <- t(EstimateMatrix)
+meta[["Nb_original"]] <- 0
+for (l in 1:nrow(tmp)) {
+  row <- tmp[l, ]
+  name <- rownames(tmp)[l]
+  name <- tolower(gsub(x = name, pattern = "\\.txt", replacement = ""))
+  meta[name, "Nb_original"] <- row[["Nb"]]
+}
+```
