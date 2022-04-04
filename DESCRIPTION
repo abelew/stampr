@@ -8,7 +8,7 @@ Authors@R: c(person("Ashton", "Belew", email="abelew@gmail.com", role=c("aut","c
 Maintainer: Ashton Trey Belew <abelew@gmail.com>
 Description: A reimplementation of the STAMP process.
 License: GPL-2 | file LICENSE
-Depends: dplyr, tidyr
+Depends: dplyr, tidyverse, extraDistr, stats
 VignetteBuilder: knitr
 ByteCompile: true
 Encoding: UTF-8
@@ -16,11 +16,14 @@ RoxygenNote: 7.1.1
 Collate:
     '01_stampr.r'
     'calculate_nb.r'
+    'exclude_samples.r'
     'filter_given_reference.r'
     'filter_tags.r'
     'plot_calibration.r'
     'plot_read_density.r'
     'predict_cfu.r'
     'preprocess_reads.r'
+    'read_csv_tags.r'
     'read_idx.r'
     'read_qiime_otus.r'
+    'rtisan.r'

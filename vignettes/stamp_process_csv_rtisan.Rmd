@@ -1,0 +1,289 @@
+---
+title: "Incorporating the original data and using the stamp rtisan method."
+author: "atb abelew@gmail.com"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_download: true
+    code_folding: show
+    fig_caption: true
+    fig_height: 7
+    fig_width: 7
+    highlight: tango
+    keep_md: false
+    mode: selfcontained
+    number_sections: true
+    self_contained: true
+    theme: readable
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+  rmdformats::readthedown:
+    code_download: true
+    code_folding: show
+    df_print: paged
+    fig_caption: true
+    fig_height: 7
+    fig_width: 7
+    highlight: tango
+    width: 300
+    keep_md: false
+    mode: selfcontained
+    toc_float: true
+  BiocStyle::html_document:
+    code_download: true
+    code_folding: show
+    fig_caption: true
+    fig_height: 7
+    fig_width: 7
+    highlight: tango
+    keep_md: false
+    mode: selfcontained
+    toc_float: true
+vignette: >
+  %\VignetteIndexEntry{error_quantification}
+  %\VignetteEngine{knitr::rmarkdown}
+  \usepackage[utf8]{inputenc}
+---
+
+<style type = "text/css">
+body, td {
+  font-size: 16px;
+}
+code.r{
+  font-size: 16px;
+}
+pre {
+ font-size: 16px
+}
+</style>
+
+```{r options, include = FALSE}
+library("stampr")
+basedir <- system.file("extdata", package = "stampr")
+knitr::opts_knit$set(width = 120,
+                     root.dir = basedir,
+                     progress = TRUE,
+                     verbose = TRUE,
+                     echo = TRUE)
+knitr::opts_chunk$set(error = TRUE,
+                      dpi = 96)
+old_options <- options(digits = 4,
+                       stringsAsFactors = FALSE,
+                       knitr.duplicate.label = "allow")
+ggplot2::theme_set(ggplot2::theme_bw(base_size = 10))
+rundate <- format(Sys.Date(), format = "%Y%m%d")
+##tmp <- sm(loadme(filename = paste0(gsub(pattern = "\\.Rmd", replace = "", x = previous_file), "-v", ver, ".rda.xz")))
+##rmd_file <- "03_expression_infection_20180822.Rmd"
+library(ggplot2)
+```
+
+# Use functions from STAMP rtisan
+
+The next step desired by the folks in the Lee lab is to make use of
+the ideas from the STAMP rtisan implementation:
+
+https://github.com/hullahalli/stampr_rtisan
+
+Given that in the process_csv.Rmd I think we showed that the current
+stamp implementation provides identical results to the original, and
+is able to take inputs from either my de-novo preprocessing methods or
+the csv file provided by the authors; then we should be able to pass
+those data structures to the resiliency functions from the rtisan
+code.
+
+One important caveat, my last iteration of the rtisan code did result
+in slightly different results, which still needs to be addressed.  I
+think pushing the data structures that we created in process_csv.Rmd
+will help in this process because I think it will make it easier to
+input other test sets as well as read the outputs.
+
+```{r sample_sheet, results='asis'}
+basedir <- system.file("extdata", package = "stampr")
+metadata_file <- file.path(basedir, "all_samples.xlsx")
+meta <- hpgltools::extract_metadata(metadata_file)
+knitr::kable(meta)
+```
+
+## Original values
+
+With all of the above in mind, the following are the values produced
+by the original implementation and are our current guidepost.  Indeed,
+they should become the basis for the testing framework when completed.
+
+There is an important caveat here: these numbers have too few
+significant digits for expect_equal() to be used, I need to
+recalculate them and provide the full result.  Also, there are three
+samples missing here which are provided by my function, I am not sure
+what is going on there.
+
+# Run original code
+
+The following block invokes the original code to (hopefully) generate
+the original Nb estimates.
+
+```{r run_original}
+Data <- read.csv(csv_input)
+rownames(Data) <- make.names(Data[["X"]], unique = TRUE)
+Data[["X"]] <- NULL
+#BigMatAll = DataII[,2:ncol(DataII)]
+BigMatAll <- Data
+usecalibrationcurve <- FALSE
+
+cbind(1:ncol(BigMatAll), colnames(BigMatAll))
+v.reads <- 1:23
+v.reference <- c(1, 2, 3)
+## Original bottlenecksamples, I think this needs to change.
+## v.bottlenecksamples <- c(1:7, 9:14, 16:22)
+## Obviously, the following line would be simpler as just 3:22, but I want to highlight
+## the a vs. b vs. c samples
+v.bottlenecksamples <- c(4:9, 10:15, 16:23)
+v.threshold <- which(rowSums(BigMatAll[, v.reference], na.rm = TRUE) > 0)
+ThresholdMatrix <- BigMatAll[v.threshold, v.reads]
+ThresholdMatrix[is.na(ThresholdMatrix) == TRUE] <- 0
+ReferenceMatrix <- ThresholdMatrix[, v.reference]
+head(ReferenceMatrix)
+fReferenceMatrix <- matrix(nrow = nrow(ReferenceMatrix),
+                           ncol = ncol(ReferenceMatrix),
+                           dimnames = list(rownames(ReferenceMatrix),
+                                           colnames(ReferenceMatrix)))
+for (x in 1:ncol(fReferenceMatrix)) {
+    fReferenceMatrix[, x] <- ReferenceMatrix[, x] / sum(ReferenceMatrix[, x])
+}
+
+fTotalInoculum <- rowMeans(fReferenceMatrix, na.rm = TRUE)
+
+### make matrix that connects bottleneckestimate to columnname
+EstimateMatrix <- matrix(nrow = 5, ncol = length(v.bottlenecksamples))
+colnames(EstimateMatrix) <- colnames(BigMatAll[, v.bottlenecksamples])
+rownames(EstimateMatrix) <- c("Nb","lower CI","Nb'_median","upper CI","# sequences")
+
+### define expected counts and frequencies
+expectedCounts <- rowMeans(ReferenceMatrix, na.rm = TRUE)
+expvec <- fTotalInoculum[expectedCounts > 0]
+inoculumSize <- sum(ReferenceMatrix, na.rm = TRUE)
+
+### loop for estimating Ne for each sample
+for (i in 1:length(v.bottlenecksamples)) {
+  this_bottleneck_sample <- v.bottlenecksamples[i]
+  this_sample <- colnames(ThresholdMatrix)[this_bottleneck_sample]
+  print(this_sample)
+  bnvec <- ThresholdMatrix[, v.bottlenecksamples[i]]
+  bnvec <- bnvec[expectedCounts > 0]
+  sampleSize <- sum(bnvec)
+  binomialNenner <- expvec * (1 - expvec)
+  measured <- bnvec / sum(bnvec)
+  var <- (measured - expvec) ^ 2
+  binomial <- as.numeric(var) / as.numeric(binomialNenner)
+  BSize <- 1 / (mean(binomial) - 1 / sampleSize - 1 / inoculumSize)
+  EstimateMatrix[1, i] <- BSize
+  Log10BSize <- round(log10(BSize), 2)
+  EstimateMatrix[5, i] <- sampleSize
+### this part of the code compares to the lookupmatrix
+  if (usecalibrationcurve) {
+    if (Log10BSize < max(as.numeric(rownames(LookUpMatrix)))) {
+      if (usecalibrationcurve) {
+        EstimateMatrix[2:4, i] <- 10 ^ LookUpMatrix[as.character(Log10BSize), ]
+      }
+    }
+  }
+}
+
+head(EstimateMatrix)
+tmp <- as.data.frame(t(EstimateMatrix))
+options(digits=12)
+expected_nb <- tmp[["Nb"]]
+names(expected_nb) <- rownames(tmp)
+expected_nb
+
+meta[["Nb_original"]] <- 0
+for (l in 1:nrow(tmp)) {
+  row <- tmp[l, ]
+  name <- rownames(tmp)[l]
+  name <- tolower(gsub(x = name, pattern = "\\.txt", replacement = ""))
+  meta[name, "Nb_original"] <- row[["Nb"]]
+}
+```
+
+In the above block I printed out the expected_nb.  When attempting to
+use other implementations, that will be our baseline until/unless we
+decide to make changes to the method.  Thus my base method should
+return those exact values.  Similarly, the rtisan outputs should
+provide those same values along with its set of 'improved' estimates.
+
+There is one important caveat, I removed the .txt and lowercased the
+sample names.
+
+```{r rewrite_expected}
+names(expected_nb) <- gsub(pattern="\\.txt", replacement="", x=tolower(names(expected_nb)))
+```
+
+```{r calculate_from_csv}
+devtools::load_all(".")
+csv_input <- "inst/extdata/rtisan_calibration_curve_ordered_frequencies.csv"
+
+csv_tags <- read_csv_tags(csv_input, meta)
+plot_read_density(csv_tags)
+raw_csv_nb <- nb_from_tags(csv_tags, metadata_column = "nb_raw_csv")
+nb_result <- raw_csv_nb[["Nb_result"]]
+na_entries <- is.na(nb_result)
+nb_result <- nb_result[!na_entries]
+
+cali_curve_csv <- plot_calibration(raw_csv_nb)
+cali_curve_csv$plot
+cali_curve_csv$lm
+
+expect_equal(expected_nb, nb_result)
+```
+
+The last line of the above block hopefully did not print anything,
+signifying that the two implementations are indeed identical.  Now let
+us start messing with those result.  The first thing I did was to
+implement a top-n filter:
+
+```{r topn_filtered}
+csv_filtered <- filter_topn_tags(raw_csv_nb, topn = 600)
+filtered_csv_nb <- nb_from_tags(csv_filtered, metadata_column = "nb_filtered_csv",
+                                zero_filter = FALSE, write = "csv_modified_metadata.xlsx")
+
+cali_curve_filt_csv <- plot_calibration(filtered_csv_nb)
+cali_curve_filt_csv$plot
+cali_curve_filt_csv$lm
+```
+
+# Rtisan
+
+In a series of Rmd files named 'test_rtisanv1' to 'test_rtisanv9' I
+made a set of iterative changes to the original rtisan implementation
+in order to make it easier for me to understand.  I must admit I still
+probably only understand ~ 2/3 of the logic in the code; but to my
+eyes it is significantly easier to read and use.  In the last
+iteration (from v8 to v9) some of the changes I made did finally
+change the results produced by that method in ways which I think make
+it adhere more closely to the original implementation; but this has
+not yet been tested.
+
+In the following block, I hope to do the following:
+
+1.  Move the set of functions from that Rmd file into a R source file
+    'R/rtisan.r' (which I may have already done?)
+2.  Make some minor changes which will make it possible to input the
+    data structure I use in read_idx.r, read_csv_tags.r, and
+    read_qiime_orus.r as input to the rtisan methods.  This data
+    structure is a list containing the metadata("modified_metadata"),
+    raw table("sample_counts"), and a long-ified version of the the
+    metadata and counts("long_samples") which is hopefully ready to be
+    passed directly to things like lm/lme4/etc or ggplot.
+3.  Run my version of the rtisan implementation and prove that the Nb
+    values it produces are (dis)similar to the original.
+4.  Figure out how/why it is not identical and modify it accordingly.
+5.  Preserve the logic from rtisan which at least in theory removes
+    the problematic tags from the inputs and provide a more robust set
+    of Nb estimates.
+6.  ???
+7.  Profit.
+
+```{r rtisan_input}
+rtisan_test <- calculate_rtisan_nb(csv_tags)
+```

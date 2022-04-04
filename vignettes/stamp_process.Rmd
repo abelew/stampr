@@ -526,18 +526,18 @@ for (l in 1:nrow(tmp)) {
 ## My version from the index counts
 
 ```{r my_nb_idx}
-my_nb <- calculate_nb(perl_tags, metadata_column = "MyNb")
+my_nb <- nb_from_tags(perl_tags, metadata_column = "MyNb")
 
-qiime_nb <- calculate_nb(qiime_tags, metadata_column="qiimenb")
+qiime_nb <- nb_from_tags(qiime_tags, zero_filter = FALSE, metadata_column="qiimenb")
 ```
 
 ## Calculate Nb after top-n tag filtering.
 
 ```{r nb_filtered}
 topn_filtered <- filter_topn_tags(my_nb, topn = 600)
-topn600_nb <- calculate_nb(topn_filtered, metadata_column = "Nb600")
+topn600_nb <- nb_from_tags(topn_filtered, zero_filter = FALSE, metadata_column = "Nb600")
 top500_filtered <- filter_topn_tags(topn600_nb, topn = 500)
-topn500_nb <- calculate_nb(top500_filtered, metadata_column = "Nb500",
+topn500_nb <- nb_from_tags(top500_filtered, zero_filter = FALSE, metadata_column = "Nb500",
                            write = "modified_metadata-20210105.xlsx")
 ```
 

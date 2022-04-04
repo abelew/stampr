@@ -1,6 +1,6 @@
-read_csv_tags <- function(csv_input, meta, id_column = "sampleid", cutoff = NULL,
-                        sample_column = "replicate")  {
-  input_df <- readr::read_csv(csv_input)
+read_csv_tags <- function(input_csv, meta, id_column = "sampleid", cutoff = NULL,
+                          sample_column = "replicate")  {
+  input_df <- readr::read_csv(input_csv)
   colnames(input_df) <- tolower(gsub(pattern = "\\.txt", replacement = "",
                                      x = colnames(input_df)))
   colnames(input_df)[1] <- "idx"
@@ -36,6 +36,7 @@ read_csv_tags <- function(csv_input, meta, id_column = "sampleid", cutoff = NULL
   }
 
   retlist <- list(
+      "input_csv" = input_csv,
       "modified_metadata" = modified,
       "long_samples" = long_samples,
       "sample_counts" = input_df)
