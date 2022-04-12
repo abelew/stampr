@@ -2,18 +2,47 @@
 % Please edit documentation in R/calculate_nb.r
 \name{calculate_nb}
 \alias{calculate_nb}
-\title{Given the metadata and tag data, calculate Nb values.}
+\title{Calculate a vector of Nb values from metadata, samples, and references.}
 \usage{
-calculate_nb(tags, generations = 1, metadata_column = "Nb", write = NULL)
+calculate_nb(
+  nb_meta,
+  nb_mtrx,
+  ref_mtrx,
+  nb_samplenames,
+  generations = 1,
+  zero_filter = FALSE
+)
 }
 \arguments{
-\item{tags}{Input tags provided by count_tags.pl and hopefully count_otus.pl}
+\item{nb_meta}{Relevant metadata for these samples.}
 
-\item{generations}{Set the g parameter from the published paper.}
+\item{nb_mtrx}{Tag matrix for the samples of interest (currently
+only calibration samples)}
+
+\item{ref_mtrx}{Tag matrix for the reference samples.}
+
+\item{nb_samplenames}{Sample names for the samples of interest
+(actually, this provides an easy place to differentiate the
+calibration from experimental samples.)}
+
+\item{generations}{Set the g parameter from the published paper,
+this is pretty much always 1.}
+
+\item{zero_filter}{Remove tags which are not found in the reference
+samples?  This should probably be moved out to the various filter
+functions.}
+}
+\value{
+Named vector containing the Nb values for the samples of interest.
 }
 \description{
-This is minor cleanup of the original implementation I received from
-Dr. Lee's collaborators.  I do have the text of the original paper, but it is
-difficult to interpret; so I fell back on basically retranscribing the
-original code.
+This function basically retranscribes the original code with new
+variable names and a few small cleanups.  It takes some metadata,
+a matrix of sample tags, reference tags, and returns back a vector
+of the associated Nb values for each sample.
+}
+\details{
+There remain quite a few cleanups and improvements which could
+improve the clarity of this.  Notably, I currently pass the sample
+names, but those are in the metadata.
 }

@@ -8,6 +8,7 @@ read_tags(
   metadata,
   id_column = "sampleid",
   index_column = "index_table",
+  sample_column = "replicate",
   output = NULL,
   cutoff = 3
 )

@@ -61,6 +61,7 @@ pre {
 
 ```{r options, include = FALSE}
 library("stampr")
+library("testthat")
 basedir <- system.file("extdata", package = "stampr")
 knitr::opts_knit$set(width = 120,
                      root.dir = basedir,
@@ -76,7 +77,6 @@ ggplot2::theme_set(ggplot2::theme_bw(base_size = 10))
 rundate <- format(Sys.Date(), format = "%Y%m%d")
 ##tmp <- sm(loadme(filename = paste0(gsub(pattern = "\\.Rmd", replace = "", x = previous_file), "-v", ver, ".rda.xz")))
 ##rmd_file <- "03_expression_infection_20180822.Rmd"
-library(ggplot2)
 ```
 
 # Use functions from STAMP rtisan
@@ -122,6 +122,14 @@ what is going on there.
 
 The following block invokes the original code to (hopefully) generate
 the original Nb estimates.
+
+# The csv input file
+
+Do not forget to specify the input file!
+
+```{r csv_input_file}
+csv_input <- "inst/extdata/rtisan_calibration_curve_ordered_frequencies.csv"
+```
 
 ```{r run_original}
 Data <- read.csv(csv_input)
@@ -221,7 +229,6 @@ names(expected_nb) <- gsub(pattern="\\.txt", replacement="", x=tolower(names(exp
 
 ```{r calculate_from_csv}
 devtools::load_all(".")
-csv_input <- "inst/extdata/rtisan_calibration_curve_ordered_frequencies.csv"
 
 csv_tags <- read_csv_tags(csv_input, meta)
 plot_read_density(csv_tags)
@@ -285,5 +292,5 @@ In the following block, I hope to do the following:
 7.  Profit.
 
 ```{r rtisan_input}
-rtisan_test <- calculate_rtisan_nb(csv_tags)
+rtisan_test <- rtisan_nb_from_tags(csv_tags)
 ```

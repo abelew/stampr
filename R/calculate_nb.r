@@ -29,10 +29,10 @@ calculate_nb <- function(nb_meta, nb_mtrx, ref_mtrx, nb_samplenames,
   observed_reference_tags <- rowSums(ref_mtrx, na.rm = TRUE) > 0
   removed_tags <- sum(!observed_reference_tags)
   if (isTRUE(zero_filter)) {
-    message("Removed: ", removed_tags, " not observed in the reference samples.")
+    message("Removed: ", removed_tags, " missing in the reference samples.")
     nb_mtrx <- nb_mtrx[observed_reference_tags, ]
   } else {
-    message("Not removing tags which are unobserved in the reference samples.")
+    message("Not removing tags which are missing in the reference samples.")
   }
 
   ## The equation for estimating the bottleneck size is available at:
@@ -47,7 +47,7 @@ calculate_nb <- function(nb_meta, nb_mtrx, ref_mtrx, nb_samplenames,
   ##    divided by the number of samples.
   ##  e.g.:
   ##  Nb ~ Ne = g/(Fhat - 1/S0 - 1/S)
-  ##  Fhat = 1/k* (Sum from 1 to k){ (fi,s - fi,0)^2 / fi,0 * (1 - fi,0) }
+  ##  Fhat = 1/k * (Sum from 1 to k) { (fi,s - fi,0)^2 / fi,0 * (1 - fi,0) }
 
   ## So, in the equations, fi,0 is the set of mean frequencies which are > 0
   ## from the reference samples.  I will call that term mean_ref_frequencies:
@@ -64,14 +64,14 @@ calculate_nb <- function(nb_meta, nb_mtrx, ref_mtrx, nb_samplenames,
   for (nb_sample in nb_samplenames) {
     column_vector <- nb_mtrx[, nb_sample]
     column_subset <- column_vector[mean_gt_zero_idx]
-    reads_in_sample <- sum(column_subset, na.rm=TRUE)
-    sample_frequencies <- column_subset / sum(column_subset, na.rm=TRUE)
+    reads_in_sample <- sum(column_subset, na.rm = TRUE)
+    sample_frequencies <- column_subset / sum(column_subset, na.rm = TRUE)
     subtracted_frequencies <- initial_frequencies * (1 - initial_frequencies)
     sample_variance <- (sample_frequencies - initial_frequencies) ^ 2
     sample_vs_threshold <- sample_variance / subtracted_frequencies
 
     Nb_estimate <- generations /
-      (mean(sample_vs_threshold, na.rm=TRUE) - 1 / reads_in_sample - 1 / total_reads)
+      (mean(sample_vs_threshold, na.rm = TRUE) - 1 / reads_in_sample - 1 / total_reads)
     nb_vector <- c(nb_vector, Nb_estimate)
   }
   names(nb_vector) <- nb_samplenames

@@ -36,28 +36,72 @@
 #' @param do_plots Print the diagnostic plots?  FIXME: ggplot-ify
 #'  these and potentially get them into the metadata.
 #' @param verbose Print some diagnostics while running?
-rtisan_nb_from_tags <- function(tags, generations = 1, metadata_column = "pre_rtisan_Nb",
+#' @export
+rtisan_nb_from_tags <- function(tags, generations = 1,
+                                metadata_prefix = "rtisan",
                                 zero_filter = FALSE, write_metadata = NULL,
                                 innoculation_cfu = 1e8, chosen_seed = 1,
                                 min_weight = 0.03, noise_correction = 0.005,
                                 input_calibration = NULL,
                                 output_csv = "rtisan_values.csv",
                                 output_noiseless = "rtisan_noiseless.csv",
-                                do_plots = FALSE, verbose = FALSE) {
+                                do_plots = FALSE, verbose = FALSE, parallel = TRUE, write = NULL) {
   read_csv <- tags[["input_csv"]]
   input_metadata <- tags[["modified_metadata"]]
+  metadata_backup <- input_metadata
   cfu_vector <- input_metadata[["cfu"]]
   names(cfu_vector) <- rownames(input_metadata)
   reference_samples_idx <- input_metadata[["type"]] == "reference"
+  pre_metadata_column <- paste0("pre_", metadata_prefix, "_Nb")
   reference_samples <- rownames(input_metadata)[reference_samples_idx]
   original_result <- nb_from_tags(tags, generations = generations,
-                                  metadata_column = metadata_column,
+                                  metadata_column = pre_metadata_column,
                                   zero_filter = FALSE, write = write_metadata)
   rtisan_result <- rtisan_nr_nb(read_csv, cfu_vector, innoculation_cfu = innoculation_cfu,
                                 chosen_seed = chosen_seed, reference_samples = reference_samples,
                                 min_weight = min_weight, noise_correction = noise_correction,
                                 input_calibration = input_calibration,
-                                output_csv = output_csv, do_plots = do_plots, verbose = verbose)
+                                output_csv = output_csv, do_plots = do_plots, verbose = verbose,
+                                parallel = parallel)
+  estimates <- rtisan_result[["estimate_table"]]
+  nb_vector <- estimates[["Nb"]]
+  nr_vector <- estimates[["Nr"]]
+  ns_vector <- estimates[["Ns"]]
+  rtisan_nb_column <- paste0(metadata_prefix, "_Nb")
+  rtisan_nr_column <- paste0(metadata_prefix, "_Nr")
+  rtisan_ns_column <- paste0(metadata_prefix, "_Ns")
+  input_metadata[[rtisan_nb_column]] <- NA
+  input_metadata[[rtisan_nr_column]] <- NA
+  input_metadata[[rtisan_ns_column]] <- NA
+
+  for (r in 1:nrow(estimates)) {
+    sample <- rownames(estimates)[r]
+    input_metadata[sample, rtisan_nb_column] <- estimates[sample, "Nb"]
+    input_metadata[sample, rtisan_nr_column] <- estimates[sample, "Nr"]
+    input_metadata[sample, rtisan_ns_column] <- estimates[sample, "Ns"]
+  }
+
+  if (!is.null(write)) {
+    extension <- tools::file_ext(write)
+    if (extension == "xlsx") {
+      written <- hpgltools::write_xlsx(data = input_metadata, excel = write)
+    } else if (extension == "csv") {
+      written <- write.csv(x = input_metadata, file = write)
+    } else if (extension == "tsv") {
+      writen <- write.tsv(x = input_metadata, file = write)
+    } else {
+      message("Dunno what to write.")
+    }
+  }
+  retlist <- list(
+    "previous_metadata" = metadata_backup,
+    "modified_metadata" = input_metadata,
+    "Nb_column" = rtisan_nb_column,
+    "Nb_result" = nb_vector,
+    "Nr_result" = nr_vector,
+    "Ns_result" = ns_vector,
+    "sample_counts" = tags[["sample_counts"]])
+  return(retlist)
 }
 
 #' Internal Resiliency Function.
@@ -81,10 +125,12 @@ rtisan_nb_from_tags <- function(tags, generations = 1, metadata_column = "pre_rt
 #' @param do_plots Print plots?
 #' @param noise_correction Constant for correcting noise!
 #' @param verbose Print text while running?
+#' @export
 calculate_resiliency <- function(reference_vector, reads_df, cfu_vector, noiseless_table,
                                  sample_name, step_df, min_weight = 0.03,
                                  input_calibration = NULL,
                                  output_csv = "rtisan_values.csv",
+                                 output_noiseless = "rtisan_noiseless.csv",
                                  innoculation_cfu = 1e8, do_plots = FALSE,
                                  noise_correction = 0.005, verbose = FALSE) {
   ## Specifies input vector (which is the average of your inputs),
@@ -98,7 +144,7 @@ calculate_resiliency <- function(reference_vector, reads_df, cfu_vector, noisele
   cfu <- innoculation_cfu
   if (!is.null(cfu_vector)) {
     wanted_sample <- names(cfu_vector) == sample_name
-    cfu <- cfu_df[wanted_sample]
+    cfu <- cfu_vector[wanted_sample]
   }
 
   ## Noise adjustment
@@ -475,7 +521,7 @@ rtisan_nr_nb <- function(read_csv, cfu_vector, innoculation_cfu = 1e8, chosen_se
                          noise_correction = 0.005,
                          input_calibration = NULL, do_plots = FALSE, verbose = FALSE,
                          output_csv = "rtisan_values.csv",
-                         output_noiseless = "rtisan_noiseless.csv") {
+                         output_noiseless = "rtisan_noiseless.csv", cpus=NULL, parallel = TRUE) {
   ## This will eventually be pulled in from the metadata if I incorporate this into my library.
   set.seed(chosen_seed)
   reads_df <- read.csv(read_csv, row.names = 1)
@@ -507,21 +553,51 @@ rtisan_nr_nb <- function(read_csv, cfu_vector, innoculation_cfu = 1e8, chosen_se
   ## the resiliency script to stand alone if needed (remembering to
   ## set plots = TRUE)
   estimate_table <- data.frame()
+  res <- NULL
+  results <- list()
+  if (isTRUE(parallel)) {
+    if (is.null(cpus)) {
+      total_cpus <- parallel::detectCores()
+      cpus <- total_cpus - 2
+    }
+    message("Starting cluster with: ", cpus, " cores.")
+    cl <- parallel::makeCluster(cpus)
+    doParallel::registerDoParallel(cl)
+    tt <- requireNamespace("parallel")
+    tt <- requireNamespace("doParallel")
+    tt <- requireNamespace("iterators")
+    tt <- requireNamespace("foreach")
+    res <- foreach(s = 1:length(sample_names),
+                   .packages = c("stampr")) %dopar% {
+                     sample_name <- sample_names[s]
+                     results[[sample_name]] <- calculate_resiliency(
+                         reference_vector, reads_df, cfu_vector, noiseless_table, sample_name, step_df,
+                         do_plots = do_plots, innoculation_cfu = innoculation_cfu,
+                         input_calibration = input_calibration, output_csv = output_csv,
+                         output_noiseless = output_noiseless,
+                         min_weight = min_weight, noise_correction = noise_correction,
+                         verbose = verbose)
+                   }
+    stopped <- parallel::stopCluster(cl)
+    ## End running multi-threaded
+  } else {
+    message("Running samples sequentially one at a time.")
+    for (s in 1:length(sample_names)) {
+      sample_name <- sample_names[s]
+      message("Starting: ", sample_name, ".")
+      res[[s]] <- calculate_resiliency(
+          reference_vector, reads_df, cfu_vector, noiseless_table, sample_name, step_df,
+          do_plots = do_plots, innoculation_cfu = innoculation_cfu,
+          input_calibration = input_calibration, output_csv = output_csv,
+          output_noiseless = output_noiseless,
+          min_weight = min_weight, noise_correction = noise_correction,
+          verbose = verbose)
+    }
+  } ## End single threaded mode
+
   for (s in 1:length(sample_names)) {
+    sample_estimate <- res[[s]]
     sample_name <- sample_names[s]
-    if (isTRUE(verbose)) {
-      message("Working on sample: ", sample_name, ".")
-    }
-    sample_estimate <- calculate_resiliency(
-        reference_vector, reads_df, cfu_vector, noiseless_table, sample_name, step_df,
-        do_plots = do_plots, innoculation_cfu = innoculation_cfu,
-        input_calibration = input_calibration, output_csv = output_csv,
-        output_noiseless = output_noiseless,
-        min_weight = min_weight, noise_correction = noise_correction,
-        verbose = verbose)
-    if (isTRUE(verbose)) {
-      print(sample_estimate[["row"]])
-    }
     noiseless_table <- sample_estimate[["noiseless_table"]]
     output_vector <- sample_estimate[["output_vector"]]
     input_vectorNoiseCorrected = sample_estimate[["input_vectorNoiseCorrected"]]
@@ -529,6 +605,8 @@ rtisan_nr_nb <- function(read_csv, cfu_vector, innoculation_cfu = 1e8, chosen_se
     table_row <- sample_estimate[["row"]]
     estimate_table <- rbind(estimate_table, table_row)
     colnames(estimate_table) <- names(table_row)
+    message("Collected result from ", sample_name, ":")
+    print(table_row)
   }
   rownames(estimate_table) <- sample_names
   if (isTRUE(verbose)) {

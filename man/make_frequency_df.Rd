@@ -9,6 +9,9 @@ make_frequency_df(mtrx)
 \arguments{
 \item{mtrx}{Matrix to transform.}
 }
+\value{
+Matrix of the same size, containing frequencies.
+}
 \description{
 Thus, take the sum of each column and divide every value by it.
 }

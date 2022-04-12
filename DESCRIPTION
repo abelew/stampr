@@ -8,11 +8,12 @@ Authors@R: c(person("Ashton", "Belew", email="abelew@gmail.com", role=c("aut","c
 Maintainer: Ashton Trey Belew <abelew@gmail.com>
 Description: A reimplementation of the STAMP process.
 License: GPL-2 | file LICENSE
-Depends: dplyr, tidyverse, extraDistr, stats
+Imports: foreach, tidyverse, stats
+Depends: dplyr, extraDistr, ggplot2
 VignetteBuilder: knitr
 ByteCompile: true
 Encoding: UTF-8
-RoxygenNote: 7.1.1
+RoxygenNote: 7.1.2
 Collate:
     '01_stampr.r'
     'calculate_nb.r'

@@ -1,3 +1,13 @@
+#' Get tags from a csv file
+#'
+#' This short circuits the processing functions.
+#'
+#' @param input_csv CSV file in the format used by the original authors.
+#' @param meta Metadata in my format.
+#' @param id_column Metadata column containing the samples by replicate..
+#' @param cutoff I forget.
+#' @param sample_column Metada column containing the parent sample IDs.
+#' @export
 read_csv_tags <- function(input_csv, meta, id_column = "sampleid", cutoff = NULL,
                           sample_column = "replicate")  {
   input_df <- readr::read_csv(input_csv)
