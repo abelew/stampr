@@ -128,7 +128,7 @@ the original Nb estimates.
 Do not forget to specify the input file!
 
 ```{r csv_input_file}
-csv_input <- "inst/extdata/rtisan_calibration_curve_ordered_frequencies.csv"
+csv_input <- system.file(file.path("extdata", "rtisan_calibration_curve_ordered_frequencies.csv"), package = "stampr")
 ```
 
 ```{r run_original}
@@ -228,8 +228,6 @@ names(expected_nb) <- gsub(pattern="\\.txt", replacement="", x=tolower(names(exp
 ```
 
 ```{r calculate_from_csv}
-devtools::load_all(".")
-
 csv_tags <- read_csv_tags(csv_input, meta)
 plot_read_density(csv_tags)
 raw_csv_nb <- nb_from_tags(csv_tags, metadata_column = "nb_raw_csv")
